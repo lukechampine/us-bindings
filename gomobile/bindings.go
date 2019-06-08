@@ -18,18 +18,68 @@ type Contract struct {
 	renterKey ed25519.PrivateKey
 }
 
-// DecodeContract parses a binary-encoded contract.
-func DecodeContract(b []byte) (Contract, error) {
+// NewContract parses a binary-encoded contract.
+func NewContract(b []byte) (*Contract, error) {
 	if len(b) != 96 {
-		return Contract{}, errors.New("invalid contract")
+		return nil, errors.New("invalid contract")
 	}
 	var pk [32]byte
 	copy(pk[:], b[:32])
-	var c Contract
-	c.hostKey = hostdb.HostPublicKey(types.Ed25519PublicKey(pk).String())
+	c := &Contract{
+		hostKey:   hostdb.HostPublicKey(types.Ed25519PublicKey(pk).String()),
+		renterKey: ed25519.NewKeyFromSeed(b[64:96]),
+	}
 	copy(c.id[:], b[32:64])
-	c.renterKey = ed25519.NewKeyFromSeed(b[64:96])
 	return c, nil
+}
+
+type ephemeralEditor struct {
+	c   *Contract
+	rev proto.ContractRevision
+}
+
+func (e *ephemeralEditor) Revision() proto.ContractRevision {
+	return e.rev
+}
+
+func (e *ephemeralEditor) SetRevision(rev proto.ContractRevision) error {
+	e.rev = rev
+	return nil
+}
+
+func (e *ephemeralEditor) Key() ed25519.PrivateKey {
+	return e.c.renterKey
+}
+
+// A HostSet is a set of Sia hosts that can be used for uploading and
+// downloading.
+type HostSet struct {
+	set *renterutil.HostSet
+}
+
+// AddHost adds a host to the set, using the provided contract to establish a
+// protocol session. If a session cannot be established, the error is returned,
+// but the host is still added to the set.
+func (hs *HostSet) AddHost(c *Contract) error {
+	var rev proto.ContractRevision
+	rev.Revision.ParentID = c.id
+	rev.Revision.UnlockConditions = types.UnlockConditions{
+		PublicKeys: []types.SiaPublicKey{{}, c.hostKey.SiaPublicKey()},
+	}
+	return hs.set.AddHost(&ephemeralEditor{c, rev})
+}
+
+// NewHostSet returns an empty HostSet, using the provided shard server to
+// resolve public keys to network addresses.
+func NewHostSet(shardSrv string) (*HostSet, error) {
+	shard := renterutil.NewSHARDClient(shardSrv)
+	currentHeight, err := shard.ChainHeight()
+	if err != nil {
+		return nil, err
+	}
+	return &HostSet{
+		set: renterutil.NewHostSet(shard, currentHeight),
+	}, nil
 }
 
 // A FileSystem supports I/O operations on Sia files.
@@ -67,43 +117,10 @@ func (fs *FileSystem) Close() error {
 	return fs.pfs.Close()
 }
 
-// NewFileSystem returns a filesystem rooted at root, using the provided shard
-// server and contract set.
-func NewFileSystem(root string, shardSrv string, contracts []Contract) (*FileSystem, error) {
-	shard := renterutil.NewSHARDClient(shardSrv)
-	currentHeight, err := shard.ChainHeight()
-	if err != nil {
-		return nil, err
-	}
-	hs := renterutil.NewHostSet(shard, currentHeight)
-	for _, c := range contracts {
-		var rev proto.ContractRevision
-		rev.Revision.ParentID = c.id
-		rev.Revision.UnlockConditions = types.UnlockConditions{
-			PublicKeys: []types.SiaPublicKey{{}, c.hostKey.SiaPublicKey()},
-		}
-		hs.AddHost(&ephemeralEditor{c, rev})
-	}
-	pfs := renterutil.NewFileSystem(root, hs)
+// NewFileSystem returns a filesystem rooted at root using the provided hosts.
+func NewFileSystem(root string, hs *HostSet) (*FileSystem, error) {
+	pfs := renterutil.NewFileSystem(root, hs.set)
 	return &FileSystem{
 		pfs: pfs,
 	}, nil
-}
-
-type ephemeralEditor struct {
-	c   Contract
-	rev proto.ContractRevision
-}
-
-func (e *ephemeralEditor) Revision() proto.ContractRevision {
-	return e.rev
-}
-
-func (e *ephemeralEditor) SetRevision(rev proto.ContractRevision) error {
-	e.rev = rev
-	return nil
-}
-
-func (e *ephemeralEditor) Key() ed25519.PrivateKey {
-	return e.c.renterKey
 }
