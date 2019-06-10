@@ -1,4 +1,4 @@
-package us
+package us // import "lukechampine.com/us-bindings/gomobile"
 
 import (
 	"errors"
