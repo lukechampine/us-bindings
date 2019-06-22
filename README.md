@@ -3,24 +3,8 @@ us-bindings
 
 Various bindings for [`us`](https://github.com/lukechampine/us). Highly experimental.
 
-## Installation
 
-### iOS
-
-```
-go get -u lukechampine.com/us-bindings/gomobile
-go get golang.org/x/mobile/cmd/gomobile
-gomobile bind -target=ios lukechampine.com/us-bindings/gomobile
-```
-
-This will produce a framework, `Us.framework`, which you can import into Xcode.
-
-### Android
-
-See https://github.com/golang/go/wiki/Mobile#building-and-deploying-to-android-1
-
-
-## Forming Contracts
+## Contracts
 
 The bindings accept contracts in the form of a 96-byte array, consisting of the
 host public key, file contract ID, and renter secret key. The easiest way to
