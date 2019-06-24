@@ -12,7 +12,6 @@ typedef struct contract_t {
 import "C"
 import (
 	"fmt"
-	"os"
 	"reflect"
 	"runtime"
 	"strings"
@@ -74,7 +73,7 @@ func freePtr(p unsafe.Pointer) {
 // It's also not easy to pass errors to C code, so we store a global error on
 // the Go side and make it accessible via a function. All functions that would
 // normally return an error return a 'falsey' value instead; the C code can then
-// call us_perror or us_strerror to access the corresponding error.
+// call us_error to access the corresponding error.
 var (
 	us_err error
 	errMu  sync.Mutex
@@ -93,11 +92,14 @@ func setError(err error) bool {
 	return us_err != nil
 }
 
-//export us_perror
-func us_perror() {
+//export us_error
+func us_error() *C.char {
 	errMu.Lock()
 	defer errMu.Unlock()
-	fmt.Fprintln(os.Stderr, us_err)
+	if us_err == nil {
+		return nil
+	}
+	return C.CString(us_err.Error())
 }
 
 // goBytes is like C.GoBytes, but directly aliases the C memory instead of

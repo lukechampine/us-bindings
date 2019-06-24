@@ -28,11 +28,11 @@ void main() {
 	char *shardAddr = "<shard server address>";
 	void* hs = us_hostset_init(shardAddr);
 	if (!hs) {
-		us_perror();
+		puts(us_error());
 		return;
 	}
 	if (!us_hostset_add(hs, &c)) {
-		us_perror();
+		puts(us_error());
 		return;
 	}
 
@@ -44,14 +44,14 @@ void main() {
 	int minHosts = 1;
 	void *f = us_fs_create(fs, "foo.txt", minHosts);
 	if (!f) {
-		us_perror();
+		puts(us_error());
 		goto closefs;
 	}
 	// write (upload) some data
 	uint8_t data[] = "Hello from C!";
 	ssize_t n = us_file_write(f, data, strlen(data));
 	if (n == -1) {
-		us_perror();
+		puts(us_error());
 		us_file_close(f);
 		goto closefs;
 	}
@@ -59,7 +59,7 @@ void main() {
 
 	// close the file
 	if (!us_file_close(f)) {
-		us_perror();
+		puts(us_error());
 		goto closefs;
 	}
 
@@ -69,7 +69,7 @@ void main() {
 	memset(buf, 0, sizeof(buf));
 	n = us_file_read(f, buf, sizeof(buf));
 	if (n == -1) {
-		us_perror();
+		puts(us_error());
 		us_file_close(f);
 		goto closefs;
 	}
@@ -78,6 +78,6 @@ void main() {
 closefs:
 	// close the filesystem
 	if (!us_fs_close(fs)) {
-		us_perror();
+		puts(us_error());
 	}
 }
