@@ -32,14 +32,13 @@ module Us
 
     class HostSet < FFI::Pointer
         def add_host(contract)
-            if !Us.us_hostset_add(self, contract)
-                raise Us.us_error()
-            end
+            ok = Us.us_hostset_add(self, contract)
+            raise Us.us_error() if !ok
         end
 
         def initialize(shard_addr)
             hs = Us.us_hostset_init(shard_addr)
-            raise Us.us_error() unless hs != nil
+            raise Us.us_error() if hs.nil?
             super(hs)
         end
     end
@@ -47,26 +46,21 @@ module Us
     class FileSystem < FFI::Pointer
         def create(name, minHosts:)
             f = File.new(Us.us_fs_create(self, name, minHosts))
-            if f == nil
-                raise Us.us_error()
-            end
+            raise Us.us_error() if f.nil?
             return f unless block_given?
             yield(f)
             f.close
         end
         def open(name)
             f = File.new(Us.us_fs_open(self, name))
-            if f == nil
-                raise Us.us_error()
-            end
+            raise Us.us_error() if f.nil?
             return f unless block_given?
             yield(f)
             f.close
         end
         def close()
-            if Us.us_fs_close(self) == false
-                raise Us.us_error()
-            end
+            ok = Us.us_fs_close(self)
+            raise Us.us_error() if !ok
         end
         def initialize(root, hostset)
             fs = super(Us.us_fs_init(root, hostset))
@@ -80,22 +74,19 @@ module Us
         def read(n)
             str = ""
             FFI::MemoryPointer.new(:char, n) do |buf|
-                if Us.us_file_read(self, buf, n) == -1
-                    raise Us.us_error()
-                end
+                bytes_read = Us.us_file_read(self, buf, n)
+                raise Us.us_error() if bytes_read == -1
                 str = buf.read_string_to_null
             end
             str
         end
         def write(str)
-            if Us.us_file_write(self, str, str.length) == -1
-                raise Us.us_error()
-            end
+            bytes_written = Us.us_file_write(self, str, str.length)
+            raise Us.us_error() if bytes_written == -1
         end
         def close()
-            if !Us.us_file_close(self)
-                raise Us.us_error()
-            end
+            ok = Us.us_file_close(self)
+            raise Us.us_error() if !ok
         end
     end
 end
