@@ -45,7 +45,7 @@ module Us
     end
 
     class FileSystem < FFI::Pointer
-        def create(name, minHosts:, &block)
+        def create(name, minHosts:)
             f = File.new(Us.us_fs_create(self, name, minHosts))
             if f == nil
                 raise Us.us_error()
@@ -54,7 +54,7 @@ module Us
             yield(f)
             f.close
         end
-        def open(name, &block)
+        def open(name)
             f = File.new(Us.us_fs_open(self, name))
             if f == nil
                 raise Us.us_error()
