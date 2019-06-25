@@ -45,14 +45,14 @@ module Us
 
     class FileSystem < FFI::Pointer
         def create(name, minHosts:)
-            f = File.new(Us.us_fs_create(self, name, minHosts))
+            f = Us::File.new(Us.us_fs_create(self, name, minHosts))
             raise Us.us_error() if f.nil?
             return f unless block_given?
             yield(f)
             f.close
         end
         def open(name)
-            f = File.new(Us.us_fs_open(self, name))
+            f = Us::File.new(Us.us_fs_open(self, name))
             raise Us.us_error() if f.nil?
             return f unless block_given?
             yield(f)
