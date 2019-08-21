@@ -1,6 +1,8 @@
 package us // import "lukechampine.com/us-bindings/gomobile"
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"io/ioutil"
 
@@ -9,6 +11,7 @@ import (
 	"lukechampine.com/us/hostdb"
 	"lukechampine.com/us/renter/proto"
 	"lukechampine.com/us/renter/renterutil"
+	"lukechampine.com/us/wallet"
 )
 
 // A Contract is a file contract formed with a Sia host.
@@ -57,16 +60,14 @@ type HostSet struct {
 	set *renterutil.HostSet
 }
 
-// AddHost adds a host to the set, using the provided contract to establish a
-// protocol session. If a session cannot be established, the error is returned,
-// but the host is still added to the set.
-func (hs *HostSet) AddHost(c *Contract) error {
+// AddHost adds a host to the set.
+func (hs *HostSet) AddHost(c *Contract) {
 	var rev proto.ContractRevision
 	rev.Revision.ParentID = c.id
 	rev.Revision.UnlockConditions = types.UnlockConditions{
 		PublicKeys: []types.SiaPublicKey{{}, c.hostKey.SiaPublicKey()},
 	}
-	return hs.set.AddHost(&ephemeralEditor{c, rev})
+	hs.set.AddHost(&ephemeralEditor{c, rev})
 }
 
 // NewHostSet returns an empty HostSet, using the provided shard server to
@@ -123,4 +124,34 @@ func NewFileSystem(root string, hs *HostSet) (*FileSystem, error) {
 	return &FileSystem{
 		pfs: pfs,
 	}, nil
+}
+
+type Seed struct {
+	seed wallet.Seed
+}
+
+// NewSeed returns a new random wallet seed.
+func NewSeed() *Seed {
+	return &Seed{wallet.NewSeed()}
+}
+
+// ToPhrase encodes a seed as a 12-word mnemonic phrase.
+func (s *Seed) ToPhrase() string {
+	return s.seed.String()
+}
+
+// PublicKey derives the specified public key.
+func (s *Seed) PublicKey(index int) string {
+	return s.seed.PublicKey(uint64(index)).String()
+}
+
+// SignTransaction derives the specified key and uses it to sign the
+// specified SigHash of the JSON-encoded transaction.
+func (s *Seed) SignTransaction(txnJSON string, sigIndex int, keyIndex int) string {
+	var txn types.Transaction
+	if err := json.Unmarshal([]byte(txnJSON), &txn); err != nil {
+		panic("invalid transaction: " + err.Error())
+	}
+	sig := s.seed.SecretKey(uint64(keyIndex)).SignHash(txn.SigHash(sigIndex, types.ASICHardforkHeight+1))
+	return base64.StdEncoding.EncodeToString(sig)
 }
