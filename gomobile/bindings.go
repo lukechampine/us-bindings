@@ -1,7 +1,6 @@
 package us // import "lukechampine.com/us-bindings/gomobile"
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -237,13 +236,7 @@ func (t *Transaction) AsJSON() string {
 	return string(js)
 }
 
-// SignTransaction derives the specified key and uses it to sign the
-// specified SigHash of the JSON-encoded transaction.
-func (s *Seed) SignTransaction(txnJSON string, sigIndex int, keyIndex int) string {
-	var txn types.Transaction
-	if err := json.Unmarshal([]byte(txnJSON), &txn); err != nil {
-		panic("invalid transaction: " + err.Error())
-	}
-	sig := s.seed.SecretKey(uint64(keyIndex)).SignHash(txn.SigHash(sigIndex, types.ASICHardforkHeight+1))
-	return base64.StdEncoding.EncodeToString(sig)
+// ValidateAddress returns true if addr is a valid Sia address.
+func ValidateAddress(addr string) bool {
+	return new(types.UnlockHash).LoadString(addr) == nil
 }
