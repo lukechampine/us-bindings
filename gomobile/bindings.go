@@ -4,8 +4,10 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/ioutil"
 
+	"gitlab.com/NebulousLabs/Sia/crypto"
 	"gitlab.com/NebulousLabs/Sia/types"
 	"lukechampine.com/us/ed25519"
 	"lukechampine.com/us/hostdb"
@@ -143,6 +145,96 @@ func (s *Seed) ToPhrase() string {
 // PublicKey derives the specified public key.
 func (s *Seed) PublicKey(index int) string {
 	return s.seed.PublicKey(uint64(index)).String()
+}
+
+func parseAddr(addr string) types.UnlockHash {
+	var uh types.UnlockHash
+	if err := uh.LoadString(addr); err != nil {
+		panic(err)
+	}
+	return uh
+}
+
+func parseAmount(value string) types.Currency {
+	var c types.Currency
+	if _, err := fmt.Sscan(value, &c); err != nil {
+		panic(err)
+	}
+	return c
+}
+
+type Transaction struct {
+	txn        types.Transaction
+	feePerByte types.Currency
+	inputSum   types.Currency
+	outputSum  types.Currency
+	sigs       map[crypto.Hash]uint64
+}
+
+func StartTransaction(feePerByte string) *Transaction {
+	return &Transaction{
+		feePerByte: parseAmount(feePerByte),
+		sigs:       make(map[crypto.Hash]uint64),
+	}
+}
+
+func (t *Transaction) AddOutput(addr string, amount string) {
+	t.txn.SiacoinOutputs = append(t.txn.SiacoinOutputs, types.SiacoinOutput{
+		UnlockHash: parseAddr(addr),
+		Value:      parseAmount(amount),
+	})
+	t.outputSum = t.outputSum.Add(parseAmount(amount))
+}
+
+func (t *Transaction) calcFee() types.Currency {
+	size := t.txn.MarshalSiaSize() + 100*len(t.txn.SiacoinInputs)
+	return t.feePerByte.Mul64(uint64(size))
+}
+
+func (t *Transaction) AddInput(id string, value string, publicKey string, keyIndex int) bool {
+	var scoid crypto.Hash
+	if err := scoid.LoadString(id); err != nil {
+		panic(err)
+	}
+	var pk types.SiaPublicKey
+	if pk.LoadString(publicKey); pk.Algorithm != types.SignatureEd25519 {
+		panic("invalid public key")
+	}
+	t.txn.SiacoinInputs = append(t.txn.SiacoinInputs, types.SiacoinInput{
+		ParentID:         types.SiacoinOutputID(scoid),
+		UnlockConditions: wallet.StandardUnlockConditions(pk),
+	})
+	t.sigs[crypto.Hash(scoid)] = uint64(keyIndex)
+
+	t.inputSum = t.inputSum.Add(parseAmount(value))
+	return t.inputSum.Cmp(t.outputSum.Add(t.calcFee())) >= 0
+}
+
+func (t *Transaction) Finalize(changeAddr string) {
+	if t.inputSum.Cmp(t.outputSum) < 0 {
+		panic("insufficient inputs")
+	}
+	fee := t.calcFee()
+	change := t.inputSum.Sub(t.outputSum)
+	if change.Cmp(fee) < 0 {
+		fee = change
+	}
+	change = change.Sub(fee)
+	t.txn.MinerFees = []types.Currency{fee}
+	if !change.IsZero() {
+		t.AddOutput(changeAddr, change.String())
+	}
+}
+
+func (t *Transaction) Sign(s *Seed) {
+	for id, keyIndex := range t.sigs {
+		wallet.AppendTransactionSignature(&t.txn, wallet.StandardTransactionSignature(id), s.seed.SecretKey(keyIndex))
+	}
+}
+
+func (t *Transaction) AsJSON() string {
+	js, _ := json.Marshal(t.txn)
+	return string(js)
 }
 
 // SignTransaction derives the specified key and uses it to sign the
