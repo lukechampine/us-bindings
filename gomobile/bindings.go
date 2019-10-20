@@ -146,6 +146,12 @@ func (s *Seed) PublicKey(index int) string {
 	return s.seed.PublicKey(uint64(index)).String()
 }
 
+// SeedFromPhrase returns the seed derived from the supplied phrase.
+func SeedFromPhrase(phrase string) (*Seed, error) {
+	s, err := wallet.SeedFromPhrase(phrase)
+	return &Seed{s}, err
+}
+
 func parseAddr(addr string) types.UnlockHash {
 	var uh types.UnlockHash
 	if err := uh.LoadString(addr); err != nil {
