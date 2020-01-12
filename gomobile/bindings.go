@@ -176,7 +176,7 @@ type Transaction struct {
 	sigs       map[crypto.Hash]uint64
 }
 
-func StartTransaction(feePerByte string) *Transaction {
+func NewTransaction(feePerByte string) *Transaction {
 	return &Transaction{
 		feePerByte: parseAmount(feePerByte),
 		sigs:       make(map[crypto.Hash]uint64),
