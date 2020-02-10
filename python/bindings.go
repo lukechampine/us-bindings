@@ -22,7 +22,6 @@ import (
     "context"
     "time"
     "math/big"
-    "bufio"
     "bytes"
 
     "github.com/pkg/errors"
@@ -30,7 +29,6 @@ import (
     "gitlab.com/NebulousLabs/Sia/types"
     "lukechampine.com/us/ed25519"
     "lukechampine.com/us/hostdb"
-    "lukechampine.com/us/merkle"
     "lukechampine.com/us/renter"
     "lukechampine.com/us/renter/proto"
     "lukechampine.com/us/renter/renterutil"
@@ -255,15 +253,11 @@ func us_ll_upload(id unsafe.Pointer, session_p unsafe.Pointer, buf unsafe.Pointe
     session := loadPtr(session_p).(*proto.Session)
     var sector [renterhost.SectorSize]byte
     copy(sector[:], goBytes(buf, renterhost.SectorSize))
-    err := session.Write([]renterhost.RPCWriteAction{{
-              Type: renterhost.RPCWriteActionAppend,
-              Data: sector[:],
-    }})
+    root, err := session.Append(&sector)
     if setError(id, err) {
         return nil
     }
-    MerkleRoot := merkle.SectorRoot(&sector)
-    return C.CBytes(MerkleRoot[:])
+    return C.CBytes(root[:])
 }
 
 //export us_ll_download
@@ -271,8 +265,7 @@ func us_ll_download(id unsafe.Pointer, session_p unsafe.Pointer, root unsafe.Poi
     session := loadPtr(session_p).(*proto.Session)
     var sectorMerkleRoot crypto.Hash
     copy(sectorMerkleRoot[:], goBytes(root, crypto.HashSize))
-    var b bytes.Buffer
-    dst := bufio.NewWriter(&b)
+    dst := bytes.NewBuffer(make([]byte, 0, length))
     err := session.Read(dst, []renterhost.RPCReadRequestSection{{
               MerkleRoot: sectorMerkleRoot,
               Offset:     uint32(offset),
@@ -281,8 +274,7 @@ func us_ll_download(id unsafe.Pointer, session_p unsafe.Pointer, root unsafe.Poi
     if setError(id, err) {
         return -1
     }
-    dst.Flush()
-    copy(goBytes(buf, int(length)), b.Bytes())
+    copy(goBytes(buf, int(length)), dst.Bytes())
     return C.ssize_t(length)
 }
 
