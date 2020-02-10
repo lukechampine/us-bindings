@@ -13,9 +13,10 @@ c = client.form_contract('feedface', os.urandom(32), '10mS', 288)
 session = client.new_session('feedface', c)
 
 # Upload some data, gets padded upto the SectorSize
-h = session.upload(b'A'*64)
+h = session.upload(b'A'*64 + b'B'*64)
 
 # Download it back with a partial read (multiple of SegmentSize)
-z = session.download(h, length=64)
+z = session.download(h, offset=64, length=64)
+
 print(z)
 

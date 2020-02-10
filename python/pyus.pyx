@@ -21,9 +21,9 @@ cdef extern from "libus.h":
         unsigned char renterKey[32]
 
     extern char* us_error(void* p0) nogil
-    extern void* us_ll_client_init(void* p0, char* p1, char* p2) nogil
+    extern void* us_ll_client_init(char* p0, char* p1) nogil
     extern void* us_ll_form_contract(void* p0, void* p1, char* p2, void* p3, char* p4, unsigned int p5) nogil
-    extern void* us_ll_new_session(void* p0, void* p1, void* p2, char* p3, contract_t* p4) nogil
+    extern void* us_ll_new_session(void* p0, void* p1, char* p2, contract_t* p3) nogil
     extern void* us_ll_upload(void* p0, void* p1, void* p2) nogil
     extern ssize_t us_ll_download(void* p0, void* p1, void* p2, void* p3, unsigned int p4, unsigned int p5) nogil
     extern GoUint8 us_ll_session_close(void* p0, void* p1)
@@ -42,71 +42,58 @@ cdef extern from "libus.h":
 SECTOR_SIZE = 1 << 22
 HASH_LEN = 32
 
+
+def error(caller):
+    cdef char *e = us_error(<void*>caller)
+    try:
+        return e.decode()
+    finally:
+        free(e)
+
+
 cdef class Client:
-    cdef unsigned int _siad
+    cdef unsigned int siad
 
     def __init__(self, host='127.0.0.1', port=9980, api_password=''):
         addr = host.encode() + b':' + str(port).encode()
         pw = api_password.encode()
 
-        self._siad = <unsigned int>us_ll_client_init(<void*>self, addr, pw)
-        if not self._siad:
-            raise RuntimeError(self.error())
-
-    def error(self):
-        cdef char *e = us_error(<void*>self)
-        try:
-            return e.decode()
-        finally:
-            free(e)
+        self.siad = <unsigned int>us_ll_client_init(addr, pw)
 
     def form_contract(self, host, key, total_funds, duration):
         host = host.encode()
         total_funds = total_funds.encode()
         cdef unsigned char[:] key_view = bytearray(key)
 
-        cdef char *contract = <char*>us_ll_form_contract(<void*>self, <void*>self._siad, host, <void*>&key_view[0], total_funds, duration)
+        cdef char *contract = <char*>us_ll_form_contract(<void*>self, <void*>self.siad, host, <void*>&key_view[0], total_funds, duration)
         if not contract:
-            raise RuntimeError(self.error())
+            raise RuntimeError(error(self))
 
         c = bytearray(contract[:sizeof(contract_t)])
         free(contract)
         return c
 
     def new_session(self, pubkey, contract):
-        return Session(self, pubkey, contract)
-
-    @property
-    def siad(self):
-        return self._siad
-
-    def __dealloc__(self):
-        us_ll_client_close(<void*>self)
+        return Session(self.siad, pubkey, contract)
 
 
 cdef class Session:
     cdef unsigned int sess
+    cdef unsigned int siad
 
-    def __init__(self, client, pubkey, contract):
+    def __init__(self, siad, pubkey, contract):
         host = pubkey.encode()
         cdef contract_t c
         c.hostKey = contract[:32]
         c.id = contract[32:64]
         c.renterKey = contract[64:96]
 
-        cdef unsigned int siad = client.siad
-        session = <unsigned int>us_ll_new_session(<void*>self, <void*>client, <void*>siad, host, &c)
+        self.siad = siad
+        session = <unsigned int>us_ll_new_session(<void*>self, <void*>self.siad, host, &c)
         if not session:
-            raise RuntimeError(self.error())
+            raise RuntimeError(error(self))
 
         self.sess = session
-
-    def error(self):
-        cdef char *e = us_error(<void*>self)
-        try:
-            return e.decode()
-        finally:
-            free(e)
 
     def upload(self, sector):
         sector = bytearray(sector)
@@ -121,7 +108,7 @@ cdef class Session:
             with nogil:
                 root = <char*>us_ll_upload(<void*>self, <void*>self.sess, <void*>&sector_view[0])
         if not root:
-            raise RuntimeError(self.error())
+            raise RuntimeError(error(self))
 
         h = bytearray(root[:HASH_LEN])
         free(root)
@@ -137,7 +124,7 @@ cdef class Session:
             with nogil:
                 ret = us_ll_download(<void*>self, <void*>self.sess, <void*>&root_view[0], <void*>&data[0], o, l)
         if ret < 0:
-            raise RuntimeError(self.error())
+            raise RuntimeError(error(self))
 
         return bytearray(data)
 
@@ -146,96 +133,118 @@ cdef class Session:
             us_ll_session_close(<void*>self, <void*>self.sess)
 
 
-cdef class Filesystem:
-    cdef unsigned int hs
-    cdef unsigned int fs
+cdef class HostSet:
+    cdef unsigned int _hs
 
     def __init__(self, host='127.0.0.1', port=9980, api_password=''):
         addr = host.encode() + b':' + str(port).encode()
         pw = api_password.encode()
 
-        self.hs = <unsigned int>us_hostset_init(<void*>self, addr, pw)
-        if not self.hs:
-            raise RuntimeError(self.error())
+        self._hs = <unsigned int>us_hostset_init(<void*>self, addr, pw)
+        if not self._hs:
+            raise RuntimeError(error(self))
 
-    def error(self):
-        cdef char *e = us_error(<void*>self)
-        try:
-            return e.decode()
-        finally:
-            free(e)
-
-    def hostset_add(self, contract):
+    def add_host(self, contract):
         cdef contract_t c
         c.hostKey = contract[:32]
         c.id = contract[32:64]
         c.renterKey = contract[64:96]
-        us_hostset_add(<void*>self, <void*>self.hs, &c)
+        us_hostset_add(<void*>self, <void*>self._hs, &c)
 
-    def fs_init(self, root):
+    @property
+    def hs(self):
+        return self._hs
+
+
+cdef class FileSystem:
+    cdef unsigned int fs
+    cdef unsigned int _hs
+
+    def __init__(self, root, hostset):
+        self._hs = hostset.hs
         root = root.encode()
 
-        self.fs = <unsigned int>us_fs_init(<void*>self, root, <void*>self.hs)
+        self.fs = <unsigned int>us_fs_init(<void*>self, root, <void*>self._hs)
 
-    def fs_create(self, filename, min_hosts):
+    def __enter__(self):
+        return self
+
+    def create(self, filename, min_hosts):
         filename = filename.encode()
 
         cdef unsigned int f
 
         f = <unsigned int>us_fs_create(<void*>self, <void*>self.fs, filename, min_hosts)
         if not f:
-            raise RuntimeError(self.error())
+            raise RuntimeError(error(self))
 
-        return f
+        return File(f)
 
-    def fs_open(self, filename):
+    def open(self, filename):
         filename = filename.encode()
 
         cdef unsigned int f
 
         f = <unsigned int>us_fs_open(<void*>self, <void*>self.fs, filename)
         if not f:
-            raise RuntimeError(self.error())
+            raise RuntimeError(error(self))
 
-        return f
+        return File(f)
 
-    def file_read(self, f, length):
+    def close(self):
+        ok = us_fs_close(<void*>self, <void*>self.fs)
+        if not ok:
+            raise RuntimeError(error(self))
+
+        return ok
+
+    def __exit__(self, type, value, traceback):
+        self.close()
+
+
+cdef class File:
+    cdef unsigned int f
+
+    def __init__(self, f):
+        self.f = f
+
+    def __enter__(self):
+        return self
+
+    def read(self, length):
         cdef unsigned char[:] data = bytearray(length)
 
-        n = us_file_read(<void*>self, <void*><unsigned int>f, <void*>&data[0], length)
+        n = us_file_read(<void*>self, <void*><unsigned int>self.f, <void*>&data[0], length)
         if n < 0:
-            raise RuntimeError(self.error())
+            raise RuntimeError(error(self))
 
         return bytearray(data[:n])
 
-    def file_write(self, f, data):
+    def write(self, data):
         length = len(data)
 
         cdef unsigned char[:] view = bytearray(data)
 
-        n = us_file_write(<void*>self, <void*><unsigned int>f, <void*>&view[0], length)
+        n = us_file_write(<void*>self, <void*><unsigned int>self.f, <void*>&view[0], length)
         if n < 0:
-            raise RuntimeError(self.error())
+            raise RuntimeError(error(self))
 
         return n
 
-    def file_seek(self, f, offset, whence=0):
-        n = us_file_seek(<void*>self, <void*><unsigned int>f, offset, whence)
+    def seek(self, offset, whence=0):
+        n = us_file_seek(<void*>self, <void*><unsigned int>self.f, offset, whence)
         if n < 0:
-            raise RuntimeError(self.error())
+            raise RuntimeError(error(self))
 
         return n
 
-    def file_close(self, f):
-        ok = us_file_close(<void*>self, <void*><unsigned int>f)
+    def close(self):
+        ok = us_file_close(<void*>self, <void*><unsigned int>self.f)
         if not ok:
-            raise RuntimeError(self.error())
+            raise RuntimeError(error(self))
 
         return ok
 
-    def fs_close(self):
-        ok = us_fs_close(<void*>self, <void*>self.fs)
-        if not ok:
-            raise RuntimeError(self.error())
+    def __exit__(self, type, value, traceback):
+        self.close()
 
-        return ok

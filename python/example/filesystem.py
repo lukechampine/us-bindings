@@ -14,8 +14,8 @@ c = binascii.unhexlify(c_hex)
 # create host set with contract
 
 # args for a siad instance. Eventually this can include support for shard servers
-client = pyus.Filesystem(host='127.0.0.1', port=9980)
-client.hostset_add(c)
+hs = pyus.HostSet(host='127.0.0.1', port=9980)
+hs.add_host(c)
 
 # create filesystem
 try:
@@ -23,24 +23,17 @@ try:
 except FileExistsError:
     pass
 
-client.fs_init("meta")
+with pyus.FileSystem("meta", hs) as fs:
+    # create a file
+    with fs.create("foo.txt", 1) as f:
 
-# create a file
-f = client.fs_create("foo.txt", 1)
+        # write (upload) some data
+        data = b"Hello from Python!"
+        f.write(data)
+        print("Uploaded:", data)
 
-# write (upload) some data
-data = b"Hello from Python!"
-client.file_write(f, data)
-print("Uploaded:", data)
-
-# close the file
-client.file_close(f)
-
-# reopen and read (download) the data
-f = client.fs_open("foo.txt")
-buf = client.file_read(f, 18)
-print("Downloaded:", buf)
-
-# close the filesystem
-client.fs_close()
+    # reopen and read (download) the data
+    with fs.open("foo.txt") as f:
+        buf = f.read(18)
+        print("Downloaded:", buf)
 

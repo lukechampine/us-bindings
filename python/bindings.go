@@ -51,47 +51,36 @@ import (
 // using unsafe.Pointer as our index, which gives us 'nil/null' semantics, but
 // in reality it's just an integer.
 var (
-    ptrtab   = make(map[uintptr]map[uintptr]interface{})
-    ptrIndex = make(map[uintptr]uintptr)
+    ptrtab   = make(map[uintptr]interface{})
+    ptrIndex uintptr
     ptrMu    sync.Mutex
 )
 
-func storePtr(id unsafe.Pointer, v interface{}) unsafe.Pointer {
+func storePtr(v interface{}) unsafe.Pointer {
     ptrMu.Lock()
     defer ptrMu.Unlock()
     if v == nil {
         return nil
     }
-    if ptrtab[uintptr(id)] == nil {
-        ptrtab[uintptr(id)] = make(map[uintptr]interface{})
-    }
-    ptrIndex[uintptr(id)]++
-    ptrtab[uintptr(id)][ptrIndex[uintptr(id)]] = v
-    return unsafe.Pointer(ptrIndex[uintptr(id)]) // go vet complains about this, but it's fine
+    ptrIndex++
+    ptrtab[ptrIndex] = v
+    return unsafe.Pointer(ptrIndex) // go vet complains about this, but it's fine
 }
 
-func loadPtr(id unsafe.Pointer, p unsafe.Pointer) interface{} {
+func loadPtr(p unsafe.Pointer) interface{} {
     ptrMu.Lock()
     defer ptrMu.Unlock()
     if p == nil {
         return nil
     }
-    return ptrtab[uintptr(id)][uintptr(p)]
+    return ptrtab[uintptr(p)]
 }
 
-func freePtr(id unsafe.Pointer, p unsafe.Pointer) {
+func freePtr(p unsafe.Pointer) {
     ptrMu.Lock()
     defer ptrMu.Unlock()
     if p != nil {
-        delete(ptrtab[uintptr(id)], uintptr(p))
-    }
-}
-
-func freePtrTbl(id unsafe.Pointer) {
-    ptrMu.Lock()
-    defer ptrMu.Unlock()
-    if id != nil {
-        delete(ptrtab, uintptr(id))
+        delete(ptrtab, uintptr(p))
     }
 }
 
@@ -179,18 +168,18 @@ func scanCurrency(s string) (types.Currency, error) {
 }
 
 //export us_ll_client_init
-func us_ll_client_init(id unsafe.Pointer, addr *C.char, pw *C.char) unsafe.Pointer {
+func us_ll_client_init(addr *C.char, pw *C.char) unsafe.Pointer {
     siadAddr := C.GoString(addr)
     siadPassword := C.GoString(pw)
     siadClient := renterutil.NewSiadClient(siadAddr, siadPassword)
-    return storePtr(id, siadClient)
+    return storePtr(siadClient)
 }
 
 //export us_ll_form_contract
 func us_ll_form_contract(id unsafe.Pointer, client_p unsafe.Pointer, host_str *C.char, key_ptr unsafe.Pointer, total_funds *C.char, duration C.uint) unsafe.Pointer {
     clientMu.Lock()
     defer clientMu.Unlock()
-    siad := loadPtr(id, client_p).(*renterutil.SiadClient)
+    siad := loadPtr(client_p).(*renterutil.SiadClient)
     hostKeyPrefix := C.GoString(host_str)
     totalFunds := C.GoString(total_funds)
 
@@ -231,10 +220,10 @@ func us_ll_form_contract(id unsafe.Pointer, client_p unsafe.Pointer, host_str *C
 }
 
 //export us_ll_new_session
-func us_ll_new_session(id unsafe.Pointer, client_id unsafe.Pointer, client_p unsafe.Pointer, host_str *C.char, contract *C.struct_contract_t) unsafe.Pointer {
+func us_ll_new_session(id unsafe.Pointer, client_p unsafe.Pointer, host_str *C.char, contract *C.struct_contract_t) unsafe.Pointer {
     clientMu.Lock()
     defer clientMu.Unlock()
-    siad := loadPtr(client_id, client_p).(*renterutil.SiadClient)
+    siad := loadPtr(client_p).(*renterutil.SiadClient)
     hostKeyPrefix := C.GoString(host_str)
 
     hostKey, err := siad.LookupHost(hostKeyPrefix)
@@ -258,12 +247,12 @@ func us_ll_new_session(id unsafe.Pointer, client_id unsafe.Pointer, client_p uns
     if setError(id, err) {
         return nil
     }
-    return storePtr(id, session)
+    return storePtr(session)
 }
 
 //export us_ll_upload
 func us_ll_upload(id unsafe.Pointer, session_p unsafe.Pointer, buf unsafe.Pointer) unsafe.Pointer {
-    session := loadPtr(id, session_p).(*proto.Session)
+    session := loadPtr(session_p).(*proto.Session)
     var sector [renterhost.SectorSize]byte
     copy(sector[:], goBytes(buf, renterhost.SectorSize))
     err := session.Write([]renterhost.RPCWriteAction{{
@@ -279,7 +268,7 @@ func us_ll_upload(id unsafe.Pointer, session_p unsafe.Pointer, buf unsafe.Pointe
 
 //export us_ll_download
 func us_ll_download(id unsafe.Pointer, session_p unsafe.Pointer, root unsafe.Pointer, buf unsafe.Pointer, offset C.uint, length C.uint) C.ssize_t {
-    session := loadPtr(id, session_p).(*proto.Session)
+    session := loadPtr(session_p).(*proto.Session)
     var sectorMerkleRoot crypto.Hash
     copy(sectorMerkleRoot[:], goBytes(root, crypto.HashSize))
     var b bytes.Buffer
@@ -299,15 +288,9 @@ func us_ll_download(id unsafe.Pointer, session_p unsafe.Pointer, root unsafe.Poi
 
 //export us_ll_session_close
 func us_ll_session_close(id unsafe.Pointer, session_p unsafe.Pointer) bool {
-    session := loadPtr(id, session_p).(*proto.Session)
+    session := loadPtr(session_p).(*proto.Session)
     session.Close()
-    freePtrTbl(id)
-    return true
-}
-
-//export us_ll_client_close
-func us_ll_client_close(id unsafe.Pointer) bool {
-    freePtrTbl(id)
+    freePtr(session_p)
     return true
 }
 
@@ -321,12 +304,12 @@ func us_hostset_init(id unsafe.Pointer, addr *C.char, pw *C.char) unsafe.Pointer
         return nil
     }
     hs := renterutil.NewHostSet(siadClient, currentHeight)
-    return storePtr(id, hs)
+    return storePtr(hs)
 }
 
 //export us_hostset_add
 func us_hostset_add(id unsafe.Pointer, hostset_p unsafe.Pointer, contract *C.struct_contract_t) bool {
-    hs := loadPtr(id, hostset_p).(*renterutil.HostSet)
+    hs := loadPtr(hostset_p).(*renterutil.HostSet)
     var c renter.Contract
     copy(c.ID[:], C.GoBytes(unsafe.Pointer(&contract.id), 32))
     c.HostKey = hostdb.HostKeyFromPublicKey(C.GoBytes(unsafe.Pointer(&contract.hostKey), 32))
@@ -337,43 +320,43 @@ func us_hostset_add(id unsafe.Pointer, hostset_p unsafe.Pointer, contract *C.str
 
 //export us_fs_init
 func us_fs_init(id unsafe.Pointer, root *C.char, hs unsafe.Pointer) unsafe.Pointer {
-    pfs := renterutil.NewFileSystem(C.GoString(root), loadPtr(id, hs).(*renterutil.HostSet))
-    return storePtr(id, pfs)
+    pfs := renterutil.NewFileSystem(C.GoString(root), loadPtr(hs).(*renterutil.HostSet))
+    return storePtr(pfs)
 }
 
 //export us_fs_close
 func us_fs_close(id unsafe.Pointer, fs_p unsafe.Pointer) bool {
-    if loadPtr(id, fs_p) == nil {
+    if loadPtr(fs_p) == nil {
         return true
     }
-    pfs := loadPtr(id, fs_p).(*renterutil.PseudoFS)
-    freePtr(id, fs_p)
+    pfs := loadPtr(fs_p).(*renterutil.PseudoFS)
+    freePtr(fs_p)
     return !setError(id, pfs.Close())
 }
 
 //export us_fs_create
 func us_fs_create(id unsafe.Pointer, fs_p unsafe.Pointer, name *C.char, minHosts int) unsafe.Pointer {
-    pfs := loadPtr(id, fs_p).(*renterutil.PseudoFS)
+    pfs := loadPtr(fs_p).(*renterutil.PseudoFS)
     pf, err := pfs.Create(C.GoString(name), minHosts)
     if setError(id, err) {
         return nil
     }
-    return storePtr(id, pf)
+    return storePtr(pf)
 }
 
 //export us_fs_open
 func us_fs_open(id unsafe.Pointer, fs_p unsafe.Pointer, name *C.char) unsafe.Pointer {
-    pfs := loadPtr(id, fs_p).(*renterutil.PseudoFS)
+    pfs := loadPtr(fs_p).(*renterutil.PseudoFS)
     pf, err := pfs.Open(C.GoString(name))
     if setError(id, err) {
         return nil
     }
-    return storePtr(id, pf)
+    return storePtr(pf)
 }
 
 //export us_file_read
 func us_file_read(id unsafe.Pointer, file_p unsafe.Pointer, buf unsafe.Pointer, count C.size_t) C.ssize_t {
-    pf := loadPtr(id, file_p).(*renterutil.PseudoFile)
+    pf := loadPtr(file_p).(*renterutil.PseudoFile)
     n, err := pf.Read(goBytes(buf, int(count)))
     if setError(id, err) {
         return -1
@@ -383,7 +366,7 @@ func us_file_read(id unsafe.Pointer, file_p unsafe.Pointer, buf unsafe.Pointer, 
 
 //export us_file_write
 func us_file_write(id unsafe.Pointer, file_p unsafe.Pointer, buf unsafe.Pointer, count C.size_t) C.ssize_t {
-    pf := loadPtr(id, file_p).(*renterutil.PseudoFile)
+    pf := loadPtr(file_p).(*renterutil.PseudoFile)
     n, err := pf.Write(goBytes(buf, int(count)))
     if setError(id, err) {
         return -1
@@ -393,7 +376,7 @@ func us_file_write(id unsafe.Pointer, file_p unsafe.Pointer, buf unsafe.Pointer,
 
 //export us_file_seek
 func us_file_seek(id unsafe.Pointer, file_p unsafe.Pointer, offset C.long, whence C.int) C.int {
-    pf := loadPtr(id, file_p).(*renterutil.PseudoFile)
+    pf := loadPtr(file_p).(*renterutil.PseudoFile)
     n, err := pf.Seek(int64(offset), int(whence))
     if setError(id, err) {
         return -1
@@ -403,11 +386,11 @@ func us_file_seek(id unsafe.Pointer, file_p unsafe.Pointer, offset C.long, whenc
 
 //export us_file_close
 func us_file_close(id unsafe.Pointer, file_p unsafe.Pointer) bool {
-    if loadPtr(id, file_p) == nil {
+    if loadPtr(file_p) == nil {
         return true
     }
-    pf := loadPtr(id, file_p).(*renterutil.PseudoFile)
-    freePtr(id, file_p)
+    pf := loadPtr(file_p).(*renterutil.PseudoFile)
+    freePtr(file_p)
     return !setError(id, pf.Close())
 }
 
