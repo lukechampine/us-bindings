@@ -158,13 +158,12 @@ cdef class HostSet:
 
 cdef class FileSystem:
     cdef unsigned int fs
-    cdef unsigned int _hs
 
     def __init__(self, root, hostset):
-        self._hs = hostset.hs
         root = root.encode()
 
-        self.fs = <unsigned int>us_fs_init(<void*>self, root, <void*>self._hs)
+        cdef unsigned int hs = hostset.hs
+        self.fs = <unsigned int>us_fs_init(<void*>self, root, <void*>hs)
 
     def __enter__(self):
         return self
