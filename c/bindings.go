@@ -18,9 +18,10 @@ import (
 	"sync"
 	"unsafe"
 
+	"lukechampine.com/shard"
 	"lukechampine.com/us/ed25519"
 	"lukechampine.com/us/hostdb"
-	"lukechampine.com/us/renter/proto"
+	"lukechampine.com/us/renter"
 	"lukechampine.com/us/renter/renterutil"
 )
 
@@ -112,16 +113,6 @@ func goBytes(ptr unsafe.Pointer, n int) []byte {
 	}))
 }
 
-// helper type to satisfy proto.ContractEditor without touching disk
-type ephemeralEditor struct {
-	rev proto.ContractRevision
-	key ed25519.PrivateKey
-}
-
-func (e *ephemeralEditor) Revision() proto.ContractRevision             { return e.rev }
-func (e *ephemeralEditor) SetRevision(rev proto.ContractRevision) error { e.rev = rev; return nil }
-func (e *ephemeralEditor) Key() ed25519.PrivateKey                      { return e.key }
-
 //export us_contract_init
 func us_contract_init(contract *C.struct_contract_t, data *C.char) {
 	b := goBytes(unsafe.Pointer(data), 96)
@@ -132,26 +123,24 @@ func us_contract_init(contract *C.struct_contract_t, data *C.char) {
 
 //export us_hostset_init
 func us_hostset_init(srv *C.char) unsafe.Pointer {
-	shard := renterutil.NewSHARDClient(C.GoString(srv))
-	currentHeight, err := shard.ChainHeight()
+	sc := shard.NewClient(C.GoString(srv))
+	currentHeight, err := sc.ChainHeight()
 	if setError(err) {
 		return nil
 	}
-	hs := renterutil.NewHostSet(shard, currentHeight)
+	hs := renterutil.NewHostSet(sc, currentHeight)
 	return storePtr(hs)
 }
 
 //export us_hostset_add
-func us_hostset_add(hostset_p unsafe.Pointer, contract *C.struct_contract_t) bool {
+func us_hostset_add(hostset_p unsafe.Pointer, contract *C.struct_contract_t) {
 	hs := loadPtr(hostset_p).(*renterutil.HostSet)
-	var rev proto.ContractRevision
-	copy(rev.Revision.ParentID[:], C.GoBytes(unsafe.Pointer(&contract.id), 32))
-	renterKey := ed25519.NewKeyFromSeed(C.GoBytes(unsafe.Pointer(&contract.renterKey), 32))
-	rpk := hostdb.HostKeyFromPublicKey(renterKey.PublicKey()).SiaPublicKey()
-	hpk := hostdb.HostKeyFromPublicKey(C.GoBytes(unsafe.Pointer(&contract.hostKey), 32)).SiaPublicKey()
-	rev.Revision.UnlockConditions.PublicKeys = append(rev.Revision.UnlockConditions.PublicKeys, rpk, hpk)
-	err := hs.AddHost(&ephemeralEditor{rev, renterKey})
-	return !setError(err)
+	c := renter.Contract{
+		HostKey:   hostdb.HostKeyFromPublicKey(C.GoBytes(unsafe.Pointer(&contract.hostKey), 32)),
+		RenterKey: ed25519.NewKeyFromSeed(C.GoBytes(unsafe.Pointer(&contract.renterKey), 32)),
+	}
+	copy(c.ID[:], C.GoBytes(unsafe.Pointer(&contract.id), 32))
+	hs.AddHost(c)
 }
 
 //export us_fs_init
