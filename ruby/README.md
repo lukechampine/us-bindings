@@ -4,7 +4,8 @@ Ruby bindings
 First build the C bindings to generate `us.so`:
 
 ```
-go build -o us.so -buildmode=c-shared ../c/bindings.go
+cd ../c
+go build -o ../ruby/us.so -buildmode=c-shared .
 ```
 
 You can then run the example program:

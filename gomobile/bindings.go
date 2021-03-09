@@ -1,6 +1,7 @@
 package us // import "lukechampine.com/us-bindings/gomobile"
 
 import (
+	"crypto/ed25519"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -8,9 +9,9 @@ import (
 
 	"gitlab.com/NebulousLabs/Sia/crypto"
 	"gitlab.com/NebulousLabs/Sia/types"
-	"lukechampine.com/us/ed25519"
+	"lukechampine.com/shard"
 	"lukechampine.com/us/hostdb"
-	"lukechampine.com/us/renter/proto"
+	"lukechampine.com/us/renter"
 	"lukechampine.com/us/renter/renterutil"
 	"lukechampine.com/us/wallet"
 )
@@ -37,24 +38,6 @@ func NewContract(b []byte) (*Contract, error) {
 	return c, nil
 }
 
-type ephemeralEditor struct {
-	c   *Contract
-	rev proto.ContractRevision
-}
-
-func (e *ephemeralEditor) Revision() proto.ContractRevision {
-	return e.rev
-}
-
-func (e *ephemeralEditor) SetRevision(rev proto.ContractRevision) error {
-	e.rev = rev
-	return nil
-}
-
-func (e *ephemeralEditor) Key() ed25519.PrivateKey {
-	return e.c.renterKey
-}
-
 // A HostSet is a set of Sia hosts that can be used for uploading and
 // downloading.
 type HostSet struct {
@@ -63,24 +46,23 @@ type HostSet struct {
 
 // AddHost adds a host to the set.
 func (hs *HostSet) AddHost(c *Contract) {
-	var rev proto.ContractRevision
-	rev.Revision.ParentID = c.id
-	rev.Revision.UnlockConditions = types.UnlockConditions{
-		PublicKeys: []types.SiaPublicKey{{}, c.hostKey.SiaPublicKey()},
-	}
-	hs.set.AddHost(&ephemeralEditor{c, rev})
+	hs.set.AddHost(renter.Contract{
+		HostKey:   c.hostKey,
+		ID:        c.id,
+		RenterKey: c.renterKey,
+	})
 }
 
 // NewHostSet returns an empty HostSet, using the provided shard server to
 // resolve public keys to network addresses.
 func NewHostSet(shardSrv string) (*HostSet, error) {
-	shard := renterutil.NewSHARDClient(shardSrv)
-	currentHeight, err := shard.ChainHeight()
+	c := shard.NewClient(shardSrv)
+	currentHeight, err := c.ChainHeight()
 	if err != nil {
 		return nil, err
 	}
 	return &HostSet{
-		set: renterutil.NewHostSet(shard, currentHeight),
+		set: renterutil.NewHostSet(c, currentHeight),
 	}, nil
 }
 

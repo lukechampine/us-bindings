@@ -11,6 +11,7 @@ typedef struct contract_t {
 */
 import "C"
 import (
+	"crypto/ed25519"
 	"fmt"
 	"reflect"
 	"runtime"
@@ -19,7 +20,6 @@ import (
 	"unsafe"
 
 	"lukechampine.com/shard"
-	"lukechampine.com/us/ed25519"
 	"lukechampine.com/us/hostdb"
 	"lukechampine.com/us/renter"
 	"lukechampine.com/us/renter/renterutil"
